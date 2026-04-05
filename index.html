@@ -132,8 +132,15 @@
     // Firebase Setup
     // ==========================================
     const firebaseConfig = {
-      // apiKey: "AIzaSyDOCxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
-    };
+  apiKey: "AIzaSyCMssHig9YsBwXue4ujMTvpSwLtf1u92mY",
+  authDomain: "class-attendance-record.firebaseapp.com",
+  databaseURL: "https://class-attendance-record-default-rtdb.firebaseio.com",
+  projectId: "class-attendance-record",
+  storageBucket: "class-attendance-record.firebasestorage.app",
+  messagingSenderId: "829706690099",
+  appId: "1:829706690099:web:63c41a0313ef7717798d46",
+  measurementId: "G-K6MN3TBQK3"
+};
 
     let app, auth, db;
     const isFirebaseConfigured = firebaseConfig.apiKey && firebaseConfig.apiKey !== "";
