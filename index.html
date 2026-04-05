@@ -209,6 +209,52 @@
       const [past, setPast] = useState([]);
       const [future, setFuture] = useState([]);
 
+      // --- Firebase Sync (リアルタイム同期用ステート) ---
+      const [syncId, setSyncId] = useState(() => {
+        let id = safeStorage.get('attendance_sync_id');
+        if (!id) {
+          id = Math.floor(10000000 + Math.random() * 90000000).toString();
+          safeStorage.set('attendance_sync_id', id);
+        }
+        return id;
+      });
+      const lastCloudUpdateTime = useRef(0);
+      const isLinkedDevice = useRef(false);
+      const isIncomingUpdate = useRef(false);
+      const [isSyncing, setIsSyncing] = useState(false);
+
+      const saveToFirebase = async (dataToSave) => {
+        if (!db || !user) return;
+        setIsSyncing(true);
+        const now = new Date().toISOString();
+        lastCloudUpdateTime.current = new Date(now).getTime();
+        try {
+          await db.collection('attendance_sync').doc(syncId).set({ 
+            data: JSON.stringify(dataToSave),
+            updatedAt: now 
+          });
+        } catch (e) {
+          console.error("Firebase Sync Error:", e);
+        } finally {
+          setTimeout(() => setIsSyncing(false), 1000);
+        }
+      };
+
+      const handleLinkDevice = (newCode) => {
+        if (!/^\d{8}$/.test(newCode)) {
+          showToast("正しい8桁の数字を入力してください", "error");
+          return;
+        }
+        if (window.confirm(`同期コード ${newCode} にリンクします。\n現在のこの端末のデータは失われ、リンク先のデータで上書きされますがよろしいですか？`)) {
+          safeStorage.set('attendance_sync_id', newCode);
+          setSyncId(newCode);
+          isLinkedDevice.current = true;
+          lastCloudUpdateTime.current = 0;
+          showToast("同期コードをリンクし、データの受信を開始しました", "success");
+        }
+      };
+      // ---------------------------------------------
+
       const showToast = (message, type = 'info') => {
         setToast({ show: true, message, type });
         setTimeout(() => setToast({ show: false, message: '', type: 'info' }), 4000);
@@ -239,6 +285,7 @@
         setAppData(next);
       };
 
+      // 1. 初回ローカルデータ読み込み
       useEffect(() => {
         try {
           const saved = safeStorage.get('attendance_app_data');
@@ -275,12 +322,43 @@
         setIsLoaded(true);
       }, []);
 
+      // 2. リアルタイム同期リスナー（他の端末で変更があった場合に受信）
+      useEffect(() => {
+        if (!db || !user || !isLoaded) return;
+        
+        const docRef = db.collection('attendance_sync').doc(syncId);
+        const unsubscribe = docRef.onSnapshot((docSnap) => {
+          if (docSnap.exists) {
+            const data = docSnap.data();
+            const cloudTime = data.updatedAt ? new Date(data.updatedAt).getTime() : 0;
+            if (cloudTime > lastCloudUpdateTime.current) {
+              lastCloudUpdateTime.current = cloudTime;
+              isIncomingUpdate.current = true; // 自分へのエコーバックを防ぐためのフラグ
+              setAppData(JSON.parse(data.data));
+            }
+          } else {
+             // クラウドにまだデータがない場合（新規発行時）
+             if (!isLinkedDevice.current) {
+                 saveToFirebase(appData);
+             }
+          }
+        });
+        return () => unsubscribe();
+      }, [db, user, syncId, isLoaded]);
+
+      // 3. データ変更時にローカル保存＆クラウド送信
       useEffect(() => {
         if (isLoaded) {
           safeStorage.set('attendance_app_data', JSON.stringify(appData));
+          if (isIncomingUpdate.current) {
+            isIncomingUpdate.current = false; // クラウドからの受信時は送信しない
+          } else {
+            saveToFirebase(appData); // 自分の操作なら送信
+          }
         }
       }, [appData, isLoaded]);
 
+      // 4. Firebase認証（匿名ログイン）
       useEffect(() => {
         if (!auth) return;
         const initAuth = async () => {
@@ -306,6 +384,11 @@
                 授業出欠記録システム
               </h1>
               <div className="flex gap-2 mt-1 sm:mt-0 items-center">
+                {isSyncing && (
+                  <div className="flex items-center text-xs text-blue-200 font-bold mr-2 animate-pulse">
+                    <i className="fa-solid fa-cloud-upload-alt mr-1"></i>同期中
+                  </div>
+                )}
                 <div className="flex items-center gap-1 mr-1 pr-2 border-r border-blue-600 print-hidden">
                   <button 
                     onClick={undo} 
@@ -360,7 +443,7 @@
           <main className="container mx-auto px-2 py-2 sm:px-4">
             {activeTab === 'attendance' && <AttendanceScreen appData={appData} setAppData={handleSetAppData} />}
             {activeTab === 'settings' && <SettingsScreen appData={appData} setAppData={handleSetAppData} showToast={showToast} />}
-            {activeTab === 'sync' && <SyncScreen appData={appData} setAppData={handleSetAppData} showToast={showToast} user={user} />}
+            {activeTab === 'sync' && <SyncScreen appData={appData} setAppData={handleSetAppData} showToast={showToast} user={user} syncId={syncId} onLinkDevice={handleLinkDevice} />}
           </main>
         </div>
       );
@@ -1141,10 +1224,9 @@
     // ==========================================
     // 3. データ同期・管理画面
     // ==========================================
-    function SyncScreen({ appData, setAppData, showToast, user }) {
-      const [syncCode, setSyncCode] = useState('');
+    function SyncScreen({ appData, setAppData, showToast, user, syncId, onLinkDevice }) {
       const [importText, setImportText] = useState('');
-      const [isCloudLoading, setIsCloudLoading] = useState(false);
+      const [inputCode, setInputCode] = useState('');
 
       const handleCopyExport = () => {
         const text = JSON.stringify(appData, null, 2);
@@ -1183,62 +1265,6 @@
         }
       };
 
-      const handleCloudUpload = async () => {
-        if (!db || !user) {
-          showToast("Firebaseが設定されていないか、未接続です", "error");
-          return;
-        }
-        if (!syncCode || syncCode.length < 4) {
-          showToast("4桁以上の同期コードを入力してください", "error");
-          return;
-        }
-        
-        setIsCloudLoading(true);
-        try {
-          await db.collection('attendance_sync').doc(syncCode).set({ 
-            data: JSON.stringify(appData),
-            updatedAt: new Date().toISOString() 
-          });
-          showToast(`クラウドへ保存しました (コード: ${syncCode})`, "success");
-        } catch (e) {
-          console.error(e);
-          showToast("アップロードに失敗しました。Firebaseのルール設定等を確認してください。", "error");
-        } finally {
-          setIsCloudLoading(false);
-        }
-      };
-
-      const handleCloudDownload = async () => {
-        if (!db || !user) {
-          showToast("Firebaseが設定されていないか、未接続です", "error");
-          return;
-        }
-        if (!syncCode || syncCode.length < 4) {
-          showToast("4桁以上の同期コードを入力してください", "error");
-          return;
-        }
-
-        setIsCloudLoading(true);
-        try {
-          const docSnap = await db.collection('attendance_sync').doc(syncCode).get();
-          
-          if (docSnap.exists) {
-            const cloudData = docSnap.data();
-            if (window.confirm("クラウドのデータで現在の状態を上書きします。よろしいですか？")) {
-              setAppData(JSON.parse(cloudData.data));
-              showToast("クラウドから復元しました", "success");
-            }
-          } else {
-            showToast("指定された同期コードのデータが見つかりません", "error");
-          }
-        } catch (e) {
-          console.error(e);
-          showToast("ダウンロードに失敗しました", "error");
-        } finally {
-          setIsCloudLoading(false);
-        }
-      };
-
       const clearLocalData = () => {
         if (window.confirm("すべてのデータを消去して初期状態に戻します。元には戻せません。よろしいですか？")) {
           setAppData(DEFAULT_DATA);
@@ -1249,45 +1275,43 @@
       return (
         <div className="max-w-4xl mx-auto space-y-6">
           <div className="bg-white p-6 rounded shadow border-t-4 border-blue-500">
-            <h2 className="text-lg font-bold mb-2 flex items-center gap-2">
+            <h2 className="text-lg font-bold mb-3 flex items-center gap-2">
               <i className="fa-solid fa-cloud text-blue-500"></i>
-              クラウド同期（リアルタイム共有）
+              端末間のデータ同期と管理
             </h2>
             <p className="text-sm text-gray-600 mb-4">
-              職員室のPCや教室のタブレットなど、複数端末でデータを共有するための機能です。
-              <br/>お好きな「同期コード」を決めて入力してください。
+              以下の同期コードを他の端末（スマホやタブレットなど）で入力すると、データがリアルタイムで共有されます。
             </p>
             
-            <div className="flex flex-col sm:flex-row gap-4 items-end bg-blue-50 p-4 rounded-lg border border-blue-100">
-              <div className="flex-1 w-full">
-                <label className="block text-sm font-bold text-gray-700 mb-1">同期コード (合言葉)</label>
+            <div className="flex flex-col sm:flex-row items-start sm:items-center gap-3 mb-5 bg-blue-50 p-4 rounded-lg border border-blue-100">
+              <span className="text-sm font-bold text-blue-800">あなたの同期コード:</span>
+              <span className="text-2xl font-bold tracking-widest text-blue-600 bg-white px-4 py-1.5 rounded shadow-sm border border-blue-200 select-all">
+                {syncId}
+              </span>
+            </div>
+
+            <div className="border-t border-gray-200 pt-5 mt-2">
+              <label className="text-sm font-bold text-gray-700 mb-1 block">他の端末のデータとリンクする</label>
+              <p className="text-xs text-red-500 mb-3 font-bold">※リンクするとこの端末のデータは失われ、リンク先のデータで上書きされます。</p>
+              <div className="flex flex-col sm:flex-row gap-2">
                 <input 
                   type="text" 
-                  value={syncCode} 
-                  onChange={e => setSyncCode(e.target.value)} 
-                  placeholder="例: class1234"
-                  className="w-full border p-2 rounded text-lg font-mono tracking-widest focus:ring-2 focus:ring-blue-500"
+                  value={inputCode}
+                  onChange={e => setInputCode(e.target.value)}
+                  placeholder="8桁の数字コードを入力" 
+                  className="border border-gray-300 rounded px-3 py-2 text-base outline-none focus:ring-2 focus:ring-blue-500 flex-1 font-bold tracking-widest sm:max-w-xs"
                 />
-              </div>
-              <div className="flex gap-2 w-full sm:w-auto">
                 <button 
-                  onClick={handleCloudUpload} 
-                  disabled={isCloudLoading}
-                  className="flex-1 sm:flex-none flex items-center justify-center gap-2 bg-blue-600 hover:bg-blue-700 disabled:bg-blue-300 text-white px-6 py-2 rounded font-bold transition-colors"
+                  onClick={() => onLinkDevice(inputCode)}
+                  className="px-6 py-2 bg-blue-600 text-white rounded font-bold hover:bg-blue-700 shadow-sm transition whitespace-nowrap flex items-center justify-center gap-2"
                 >
-                  <i className="fa-solid fa-cloud-upload-alt"></i> アップロード
-                </button>
-                <button 
-                  onClick={handleCloudDownload} 
-                  disabled={isCloudLoading}
-                  className="flex-1 sm:flex-none flex items-center justify-center gap-2 bg-emerald-600 hover:bg-emerald-700 disabled:bg-emerald-300 text-white px-6 py-2 rounded font-bold transition-colors"
-                >
-                  <i className="fa-solid fa-cloud-download-alt"></i> 読み込み
+                  <i className="fa-solid fa-link"></i> リンクする
                 </button>
               </div>
             </div>
+            
             {!isFirebaseConfigured && (
-               <p className="text-xs text-red-500 mt-2 font-bold"><i className="fa-solid fa-exclamation-triangle"></i> 現在Firebaseが設定されていないため、クラウド機能は利用できません。HTMLソース内の設定を書き換えてください。</p>
+               <p className="text-xs text-red-500 mt-4 font-bold"><i className="fa-solid fa-exclamation-triangle"></i> 現在Firebaseが設定されていないため、クラウド機能は利用できません。</p>
             )}
           </div>
 
