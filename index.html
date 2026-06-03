@@ -8,12 +8,11 @@
   <!-- Tailwind CSS -->
   <script src="https://cdn.tailwindcss.com"></script>
   
-  <!-- Google Fonts (BIZ UDPGothic - ユニバーサルデザインフォント) -->
+  <!-- Google Fonts (BIZ UDPGothic) -->
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=BIZ+UDPGothic:wght@400;700&display=swap" rel="stylesheet">
 
-  <!-- Tailwind CSSの設定を上書きし、デフォルトフォントをUDフォントにする -->
   <script>
     tailwind.config = {
       theme: {
@@ -36,19 +35,25 @@
   <!-- Babel -->
   <script src="https://unpkg.com/@babel/standalone@7.23.0/babel.min.js"></script>
 
-  <!-- Firebase (Compat版) -->
-  <script src="https://www.gstatic.com/firebasejs/11.6.1/firebase-app-compat.js"></script>
-  <script src="https://www.gstatic.com/firebasejs/11.6.1/firebase-auth-compat.js"></script>
-  <script src="https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore-compat.js"></script>
+  <!-- Firebase (Modular版) -->
+  <script type="module">
+    import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
+    import { getAuth, signInWithCustomToken, signInAnonymously, onAuthStateChanged, createUserWithEmailAndPassword, signInWithEmailAndPassword, signOut, setPersistence, browserSessionPersistence } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+    import { getFirestore, doc, setDoc, getDoc, onSnapshot, collection } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+
+    window.fb = {
+      initializeApp, getAuth, signInWithCustomToken, signInAnonymously, onAuthStateChanged, createUserWithEmailAndPassword, signInWithEmailAndPassword, signOut, setPersistence, browserSessionPersistence,
+      getFirestore, doc, setDoc, getDoc, onSnapshot, collection
+    };
+    window.dispatchEvent(new Event('firebase-loaded'));
+  </script>
 
   <style>
     @media print {
-      /* ★ 印刷レイアウト: A4縦(portrait)に変更、余白を狭くして広く使う */
       @page { size: A4 portrait; margin: 8mm; }
       body { background: white; }
       .print-hidden { display: none !important; }
       .print-expand { width: 100% !important; max-height: none !important; overflow: visible !important; border: none !important; box-shadow: none !important; }
-      /* テーブルを自動縮小レイアウトに変更 */
       table { width: 100% !important; border-collapse: collapse; table-layout: auto !important; }
       .sticky { position: static !important; }
     }
@@ -63,8 +68,7 @@
   <div id="root">
     <div style="display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100vh; font-family: 'BIZ UDPGothic', sans-serif; color: #4b5563;">
       <i class="fa-solid fa-spinner fa-spin" style="font-size: 2rem; margin-bottom: 1rem; color: #1e40af;"></i>
-      <h2 style="font-weight: bold; margin-bottom: 0.5rem;">アプリを読み込んでいます...</h2>
-      <p style="font-size: 0.875rem;">※しばらく待っても画面が変わらない場合は、インターネット接続をご確認ください。</p>
+      <h2 style="font-weight: bold; margin-bottom: 0.5rem;">システムを起動しています...</h2>
     </div>
   </div>
 
@@ -72,7 +76,7 @@
     const { useState, useEffect, useRef } = React;
 
     // ==========================================
-    // エラーバウンダリ（画面が真っ白になるのを防ぐ）
+    // エラーバウンダリ
     // ==========================================
     class ErrorBoundary extends React.Component {
       constructor(props) {
@@ -90,9 +94,6 @@
           return (
             <div className="p-8 max-w-2xl mx-auto mt-10 bg-white border-t-4 border-red-500 rounded shadow">
               <h2 className="text-xl font-bold text-red-600 mb-4"><i className="fa-solid fa-triangle-exclamation"></i> 予期せぬエラーが発生しました</h2>
-              <p className="text-sm text-gray-700 mb-4">
-                端末内に保存されている古いデータと、新しいシステムの間に互換性の問題が発生している可能性があります。
-              </p>
               <div className="bg-gray-100 p-4 rounded text-xs font-mono text-red-800 mb-6 overflow-auto">
                 {this.state.error && this.state.error.toString()}
               </div>
@@ -100,6 +101,7 @@
                 onClick={() => {
                   if (window.confirm("端末内のデータを初期化して再読み込みします。よろしいですか？")) {
                     localStorage.removeItem('attendance_app_data');
+                    localStorage.removeItem('last_uid');
                     window.location.reload();
                   }
                 }}
@@ -114,45 +116,11 @@
       }
     }
 
-    // ==========================================
-    // ローカル環境向けの安全なストレージ操作
-    // ==========================================
     const safeStorage = {
-      get: (key) => {
-        try { return localStorage.getItem(key); } 
-        catch (e) { return null; }
-      },
-      set: (key, value) => {
-        try { localStorage.setItem(key, value); } 
-        catch (e) { }
-      }
+      get: (key) => { try { return localStorage.getItem(key); } catch (e) { return null; } },
+      set: (key, value) => { try { localStorage.setItem(key, value); } catch (e) { } },
+      removeItem: (key) => { try { localStorage.removeItem(key); } catch (e) { } }
     };
-
-    // ==========================================
-    // Firebase Setup
-    // ==========================================
-    const firebaseConfig = {
-  apiKey: "AIzaSyCMssHig9YsBwXue4ujMTvpSwLtf1u92mY",
-  authDomain: "class-attendance-record.firebaseapp.com",
-  databaseURL: "https://class-attendance-record-default-rtdb.firebaseio.com",
-  projectId: "class-attendance-record",
-  storageBucket: "class-attendance-record.firebasestorage.app",
-  messagingSenderId: "829706690099",
-  appId: "1:829706690099:web:63c41a0313ef7717798d46",
-  measurementId: "G-K6MN3TBQK3"
-};
-
-    let app, auth, db;
-    const isFirebaseConfigured = firebaseConfig.apiKey && firebaseConfig.apiKey !== "";
-    if (isFirebaseConfigured) {
-      try {
-        app = firebase.initializeApp(firebaseConfig);
-        auth = firebase.auth();
-        db = firebase.firestore();
-      } catch (e) {
-        console.error("Firebaseの初期化エラー:", e);
-      }
-    }
 
     // ==========================================
     // ユーティリティ・定数
@@ -168,13 +136,9 @@
 
     const getStatusConfig = (val) => STATUS_OPTIONS.find(opt => opt.value === val) || STATUS_OPTIONS[0];
 
-    // ローカルタイムで現在の日付(YYYY-MM-DD)を取得する関数
     const getLocalDateString = () => {
       const d = new Date();
-      const year = d.getFullYear();
-      const month = String(d.getMonth() + 1).padStart(2, '0');
-      const day = String(d.getDate()).padStart(2, '0');
-      return `${year}-${month}-${day}`;
+      return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
     };
 
     const DEFAULT_DATA = {
@@ -197,6 +161,100 @@
     };
 
     // ==========================================
+    // 認証モーダルコンポーネント
+    // ==========================================
+    function AuthModal({ onLogin, onGuestLogin, onRegister }) {
+      const [mode, setMode] = useState('login');
+      const [email, setEmail] = useState('');
+      const [password, setPassword] = useState('');
+      const [loading, setLoading] = useState(false);
+
+      const handleSubmit = async () => {
+        if (!email) return alert("メールアドレスを入力してください");
+        setLoading(true);
+        try {
+          if (mode === 'login') {
+            if (!password) { setLoading(false); return alert("パスワードを入力してください"); }
+            await onLogin(email, password);
+          } else {
+            let currentPass = password;
+            if (!currentPass) {
+              currentPass = Math.random().toString(36).slice(-8) + "aA1!";
+              alert(`パスワードが自動生成されました。\nログインに必要なので必ずメモしてください。\n\nパスワード: ${currentPass}`);
+            }
+            await onRegister(email, currentPass);
+          }
+        } catch (e) {
+          alert("認証エラー: " + e.message);
+        } finally {
+          setLoading(false);
+        }
+      };
+
+      const handleGuest = async () => {
+        setLoading(true);
+        try {
+          await onGuestLogin();
+        } catch(e) {
+          alert("エラー: " + e.message);
+        } finally {
+          setLoading(false);
+        }
+      };
+
+      return (
+        <div className="fixed inset-0 bg-white z-[200] flex flex-col justify-center items-center">
+          {loading ? (
+            <div className="flex flex-col items-center justify-center">
+              <i className="fa-solid fa-spinner fa-spin text-4xl text-blue-800 mb-4"></i>
+              <p className="text-sm font-bold text-gray-500">アカウントを確認中...</p>
+            </div>
+          ) : (
+            <div className="bg-white sm:rounded-xl sm:shadow-2xl p-6 w-full max-w-sm flex flex-col relative sm:border border-gray-200 h-full sm:h-auto justify-center">
+              <h2 className="text-2xl font-bold text-blue-800 mb-6 text-center">
+                <i className="fa-solid fa-pen mr-2"></i>出欠記録システム
+              </h2>
+
+              <div className="bg-blue-50 text-blue-800 text-[10px] p-2.5 rounded mb-4 border border-blue-200">
+                <i className="fa-solid fa-shield-halved mr-1"></i> セキュリティ保護のため、ブラウザを閉じると自動的にログアウトされます。
+              </div>
+              
+              <div className="flex mb-6 border-b border-gray-200">
+                <button type="button" onClick={() => setMode('login')} className={`flex-1 py-2 text-sm font-bold border-b-2 transition ${mode === 'login' ? 'border-blue-600 text-blue-600' : 'border-transparent text-gray-500'}`}>ログイン</button>
+                <button type="button" onClick={() => setMode('register')} className={`flex-1 py-2 text-sm font-bold border-b-2 transition ${mode === 'register' ? 'border-blue-600 text-blue-600' : 'border-transparent text-gray-500'}`}>新規作成</button>
+              </div>
+              
+              <div className="space-y-4 mb-6">
+                <div>
+                  <label className="block text-xs font-bold text-gray-600 mb-1.5">メールアドレス</label>
+                  <input type="email" value={email} onChange={e => setEmail(e.target.value)} className="w-full border border-gray-300 rounded-lg px-4 py-2.5 text-sm outline-none focus:border-blue-500 font-bold bg-gray-50 focus:bg-white transition-colors" placeholder="teacher@example.com" />
+                </div>
+                <div>
+                  <label className="block text-xs font-bold text-gray-600 mb-1.5">パスワード</label>
+                  <input type="password" value={password} onChange={e => setPassword(e.target.value)} className="w-full border border-gray-300 rounded-lg px-4 py-2.5 text-sm outline-none focus:border-blue-500 font-bold bg-gray-50 focus:bg-white transition-colors" placeholder="••••••••" />
+                  {mode === 'register' && <p className="text-[10px] text-gray-500 mt-1.5"><i className="fa-solid fa-info-circle"></i> 未入力の場合は自動生成されます。</p>}
+                </div>
+              </div>
+
+              <button type="button" onClick={handleSubmit} className="w-full bg-blue-600 text-white font-bold py-3 rounded-lg hover:bg-blue-700 transition shadow-sm mb-6 text-sm">
+                {mode === 'login' ? 'ログイン' : 'アカウント作成'}
+              </button>
+
+              <div className="relative flex items-center justify-center mb-6">
+                <div className="absolute border-t border-gray-300 w-full"></div>
+                <span className="bg-white px-3 text-xs text-gray-400 font-bold relative z-10">または</span>
+              </div>
+
+              <button type="button" onClick={handleGuest} className="w-full bg-gray-50 text-gray-700 font-bold py-3 rounded-lg hover:bg-gray-100 border border-gray-300 transition shadow-sm text-sm">
+                <i className="fa-solid fa-user-secret mr-1.5"></i> ゲストとして利用（お試し）
+              </button>
+            </div>
+          )}
+        </div>
+      );
+    }
+
+    // ==========================================
     // メインコンポーネント
     // ==========================================
     function App() {
@@ -204,24 +262,150 @@
       const [appData, setAppData] = useState(DEFAULT_DATA);
       const [isLoaded, setIsLoaded] = useState(false);
       const [toast, setToast] = useState({ show: false, message: '', type: 'info' });
-      const [user, setUser] = useState(null);
-
+      
       const [past, setPast] = useState([]);
       const [future, setFuture] = useState([]);
 
-      // --- Firebase Sync (リアルタイム同期用ステート) ---
-      const [syncId, setSyncId] = useState(() => {
-        let id = safeStorage.get('attendance_sync_id');
-        if (!id) {
-          id = Math.floor(10000000 + Math.random() * 90000000).toString();
-          safeStorage.set('attendance_sync_id', id);
-        }
-        return id;
-      });
+      // Firebase / Auth 関連ステート
+      const [fbApp, setFbApp] = useState(null);
+      const [auth, setAuth] = useState(null);
+      const [db, setDb] = useState(null);
+      const [appId, setAppId] = useState('default-app-id');
+      const [user, setUser] = useState(null);
+      const [authInitialized, setAuthInitialized] = useState(false);
+      const [showAuthModal, setShowAuthModal] = useState(true);
+
       const lastCloudUpdateTime = useRef(0);
-      const isLinkedDevice = useRef(false);
       const isIncomingUpdate = useRef(false);
       const [isSyncing, setIsSyncing] = useState(false);
+
+      // Firebase Init
+      useEffect(() => {
+        const initFb = () => {
+          const config = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : {
+            apiKey: "AIzaSyCMssHig9YsBwXue4ujMTvpSwLtf1u92mY",
+            authDomain: "class-attendance-record.firebaseapp.com",
+            databaseURL: "https://class-attendance-record-default-rtdb.firebaseio.com",
+            projectId: "class-attendance-record",
+            storageBucket: "class-attendance-record.firebasestorage.app",
+            messagingSenderId: "829706690099",
+            appId: "1:829706690099:web:63c41a0313ef7717798d46"
+          };
+          const currentAppId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
+          setAppId(currentAppId);
+          
+          const application = window.fb.initializeApp(config);
+          setFbApp(application);
+          const authInstance = window.fb.getAuth(application);
+          setAuth(authInstance);
+          setDb(window.fb.getFirestore(application));
+
+          // アプリ起動時にログアウト状態から始めるため、セッションを「ブラウザを閉じるまで」に制限
+          window.fb.setPersistence(authInstance, window.fb.browserSessionPersistence)
+            .catch(err => console.error("Persistence設定エラー:", err));
+        };
+
+        if (window.fb) {
+          initFb();
+        } else {
+          const onLoaded = () => {
+            initFb();
+            window.removeEventListener('firebase-loaded', onLoaded);
+          };
+          window.addEventListener('firebase-loaded', onLoaded);
+        }
+      }, []);
+
+      // 1. 初回ローカルデータ読み込み
+      useEffect(() => {
+        try {
+          const saved = safeStorage.get('attendance_app_data');
+          if (saved) {
+            let parsed = JSON.parse(saved);
+            if (parsed && parsed.classes) {
+              if (!parsed.settings.grades) {
+                parsed.settings.grades = {
+                  1: parsed.settings.grade === 1 ? (parsed.settings.classCount || 1) : (parsed.classes.filter(c => c.classId.startsWith('1-')).length || 0),
+                  2: parsed.settings.grade === 2 ? (parsed.settings.classCount || 1) : (parsed.classes.filter(c => c.classId.startsWith('2-')).length || 0),
+                  3: parsed.settings.grade === 3 ? (parsed.settings.classCount || 1) : (parsed.classes.filter(c => c.classId.startsWith('3-')).length || 0),
+                };
+              }
+              parsed.classes.forEach(c => {
+                c.students.forEach(s => { if (!s.status) s.status = "在籍"; });
+              });
+              if (parsed.lessons) {
+                parsed.lessons = parsed.lessons.map(l => ({ ...l, isLocked: l.isLocked || false }));
+              }
+              setAppData(parsed);
+            }
+          }
+        } catch (e) {
+          console.error("データのパースに失敗しました", e);
+        }
+        setIsLoaded(true);
+      }, []);
+
+      // 2. Auth State Listener
+      useEffect(() => {
+        if (!auth) return;
+        const unsubscribe = window.fb.onAuthStateChanged(auth, (currentUser) => {
+          if (currentUser) {
+            const lastUid = safeStorage.get('last_uid');
+            if (lastUid && lastUid !== currentUser.uid) {
+              // 違うアカウントでログインした場合はローカルデータをリセットして混在を防ぐ
+              setAppData(DEFAULT_DATA);
+              safeStorage.set('attendance_app_data', JSON.stringify(DEFAULT_DATA));
+              lastCloudUpdateTime.current = 0; // クラウドのデータを受け入れるためにリセット
+            }
+            safeStorage.set('last_uid', currentUser.uid);
+            setUser(currentUser);
+            setShowAuthModal(false);
+          } else {
+            setUser(null);
+            setShowAuthModal(true);
+          }
+          setAuthInitialized(true);
+        });
+        return () => unsubscribe();
+      }, [auth]);
+
+      // 3. Firestore Listener (Cloud -> Local)
+      useEffect(() => {
+        if (!db || !user || !isLoaded) return;
+        
+        const docRef = window.fb.doc(db, 'artifacts', appId, 'users', user.uid, 'attendance_data', 'main');
+        
+        const unsubscribe = window.fb.onSnapshot(docRef, (docSnap) => {
+          if (docSnap.exists()) {
+            const data = docSnap.data();
+            const cloudTime = data.updatedAt ? new Date(data.updatedAt).getTime() : 0;
+            // クラウドの方が新しければマージ（上書き）
+            if (cloudTime > lastCloudUpdateTime.current) {
+              lastCloudUpdateTime.current = cloudTime;
+              isIncomingUpdate.current = true;
+              setAppData(JSON.parse(data.data));
+            }
+          } else {
+            // クラウドにデータがない場合は現在のローカルデータをアップロード
+            saveToFirebase(appData);
+          }
+        }, (error) => {
+          console.error("Firestore sync error:", error);
+        });
+        return () => unsubscribe();
+      }, [db, user, isLoaded]);
+
+      // 4. データ変更時にローカル保存＆クラウド送信 (Local -> Cloud)
+      useEffect(() => {
+        if (isLoaded) {
+          safeStorage.set('attendance_app_data', JSON.stringify(appData));
+          if (isIncomingUpdate.current) {
+            isIncomingUpdate.current = false; // クラウドからの受信時は送信しない
+          } else {
+            saveToFirebase(appData); // 自分の操作なら送信
+          }
+        }
+      }, [appData, isLoaded]);
 
       const saveToFirebase = async (dataToSave) => {
         if (!db || !user) return;
@@ -229,7 +413,8 @@
         const now = new Date().toISOString();
         lastCloudUpdateTime.current = new Date(now).getTime();
         try {
-          await db.collection('attendance_sync').doc(syncId).set({ 
+          const docRef = window.fb.doc(db, 'artifacts', appId, 'users', user.uid, 'attendance_data', 'main');
+          await window.fb.setDoc(docRef, { 
             data: JSON.stringify(dataToSave),
             updatedAt: now 
           });
@@ -240,20 +425,26 @@
         }
       };
 
-      const handleLinkDevice = (newCode) => {
-        if (!/^\d{8}$/.test(newCode)) {
-          showToast("正しい8桁の数字を入力してください", "error");
-          return;
-        }
-        if (window.confirm(`同期コード ${newCode} にリンクします。\n現在のこの端末のデータは失われ、リンク先のデータで上書きされますがよろしいですか？`)) {
-          safeStorage.set('attendance_sync_id', newCode);
-          setSyncId(newCode);
-          isLinkedDevice.current = true;
-          lastCloudUpdateTime.current = 0;
-          showToast("同期コードをリンクし、データの受信を開始しました", "success");
+      const handleLogin = async (email, password) => {
+        await window.fb.signInWithEmailAndPassword(auth, email, password);
+      };
+
+      const handleRegister = async (email, password) => {
+        await window.fb.createUserWithEmailAndPassword(auth, email, password);
+      };
+
+      const handleGuestLogin = async () => {
+        await window.fb.signInAnonymously(auth);
+      };
+
+      const handleLogout = async () => {
+        if (window.confirm("ログアウトしますか？（未保存の同期データは失われる可能性があります）")) {
+          setAppData(DEFAULT_DATA);
+          safeStorage.removeItem('attendance_app_data');
+          safeStorage.removeItem('last_uid');
+          await window.fb.signOut(auth);
         }
       };
-      // ---------------------------------------------
 
       const showToast = (message, type = 'info') => {
         setToast({ show: true, message, type });
@@ -285,98 +476,25 @@
         setAppData(next);
       };
 
-      // 1. 初回ローカルデータ読み込み
-      useEffect(() => {
-        try {
-          const saved = safeStorage.get('attendance_app_data');
-          if (saved) {
-            let parsed = JSON.parse(saved);
-            
-            if (parsed && parsed.classes) {
-              if (!parsed.settings.grades) {
-                parsed.settings.grades = {
-                  1: parsed.settings.grade === 1 ? (parsed.settings.classCount || 1) : (parsed.classes.filter(c => c.classId.startsWith('1-')).length || 0),
-                  2: parsed.settings.grade === 2 ? (parsed.settings.classCount || 1) : (parsed.classes.filter(c => c.classId.startsWith('2-')).length || 0),
-                  3: parsed.settings.grade === 3 ? (parsed.settings.classCount || 1) : (parsed.classes.filter(c => c.classId.startsWith('3-')).length || 0),
-                };
-              }
-              parsed.classes.forEach(c => {
-                c.students.forEach(s => {
-                  if (!s.status) s.status = "在籍";
-                });
-              });
-              
-              if (parsed.lessons) {
-                parsed.lessons = parsed.lessons.map(l => ({
-                  ...l,
-                  isLocked: l.isLocked || false
-                }));
-              }
-              
-              setAppData(parsed);
-            }
-          }
-        } catch (e) {
-          console.error("データのパースに失敗しました", e);
-        }
-        setIsLoaded(true);
-      }, []);
-
-      // 2. リアルタイム同期リスナー（他の端末で変更があった場合に受信）
-      useEffect(() => {
-        if (!db || !user || !isLoaded) return;
-        
-        const docRef = db.collection('attendance_sync').doc(syncId);
-        const unsubscribe = docRef.onSnapshot((docSnap) => {
-          if (docSnap.exists) {
-            const data = docSnap.data();
-            const cloudTime = data.updatedAt ? new Date(data.updatedAt).getTime() : 0;
-            if (cloudTime > lastCloudUpdateTime.current) {
-              lastCloudUpdateTime.current = cloudTime;
-              isIncomingUpdate.current = true; // 自分へのエコーバックを防ぐためのフラグ
-              setAppData(JSON.parse(data.data));
-            }
-          } else {
-             // クラウドにまだデータがない場合（新規発行時）
-             if (!isLinkedDevice.current) {
-                 saveToFirebase(appData);
-             }
-          }
-        });
-        return () => unsubscribe();
-      }, [db, user, syncId, isLoaded]);
-
-      // 3. データ変更時にローカル保存＆クラウド送信
-      useEffect(() => {
-        if (isLoaded) {
-          safeStorage.set('attendance_app_data', JSON.stringify(appData));
-          if (isIncomingUpdate.current) {
-            isIncomingUpdate.current = false; // クラウドからの受信時は送信しない
-          } else {
-            saveToFirebase(appData); // 自分の操作なら送信
-          }
-        }
-      }, [appData, isLoaded]);
-
-      // 4. Firebase認証（匿名ログイン）
-      useEffect(() => {
-        if (!auth) return;
-        const initAuth = async () => {
-          try {
-            await auth.signInAnonymously();
-          } catch (e) {
-            console.error("Firebase Auth Error", e);
-          }
-        };
-        initAuth();
-        const unsubscribe = auth.onAuthStateChanged(setUser);
-        return () => unsubscribe();
-      }, []);
-
-      if (!isLoaded) return null;
+      if (!isLoaded || !authInitialized) {
+        return (
+          <div className="flex flex-col items-center justify-center h-screen bg-gray-50 text-gray-600 font-sans">
+            <i className="fa-solid fa-spinner fa-spin text-4xl text-blue-800 mb-4"></i>
+            <h2 className="font-bold text-lg mb-2">システムを準備しています...</h2>
+          </div>
+        );
+      }
 
       return (
         <div>
+          {showAuthModal && (
+            <AuthModal 
+              onLogin={handleLogin} 
+              onRegister={handleRegister} 
+              onGuestLogin={handleGuestLogin} 
+            />
+          )}
+
           <header className="bg-blue-800 text-white shadow-md print-hidden">
             <div className="container mx-auto px-4 py-2 flex flex-wrap justify-between items-center">
               <h1 className="text-xl font-bold flex items-center gap-2">
@@ -423,8 +541,8 @@
                 <NavButton 
                   active={activeTab === 'sync'} 
                   onClick={() => setActiveTab('sync')} 
-                  icon={<i className="fa-solid fa-sync-alt"></i>} 
-                  label="データ同期" 
+                  icon={<i className="fa-solid fa-user-circle"></i>} 
+                  label="アカウント・同期" 
                 />
               </div>
             </div>
@@ -443,7 +561,7 @@
           <main className="container mx-auto px-2 py-2 sm:px-4">
             {activeTab === 'attendance' && <AttendanceScreen appData={appData} setAppData={handleSetAppData} />}
             {activeTab === 'settings' && <SettingsScreen appData={appData} setAppData={handleSetAppData} showToast={showToast} />}
-            {activeTab === 'sync' && <SyncScreen appData={appData} setAppData={handleSetAppData} showToast={showToast} user={user} syncId={syncId} onLinkDevice={handleLinkDevice} />}
+            {activeTab === 'sync' && <SyncScreen appData={appData} setAppData={handleSetAppData} showToast={showToast} user={user} onLogout={handleLogout} />}
           </main>
         </div>
       );
@@ -835,7 +953,6 @@
       const [activeEditClassId, setActiveEditClassId] = useState(appData.classes[0]?.classId || null);
       const [activeGradeTab, setActiveGradeTab] = useState(activeEditClassId ? activeEditClassId.split('-')[0] : "1");
       
-      // ★ バルクインポート（一括追加）用の状態
       const [bulkImport, setBulkImport] = useState({ show: false, classId: null, text: '' });
 
       useEffect(() => {
@@ -890,7 +1007,7 @@
            setActiveEditClassId(firstVisible?.classId || null);
         }
 
-        showToast("クラス構成を更新しました。（※減らしたクラスのデータも裏側で保護されています）", "success");
+        showToast("クラス構成を更新しました。（※減らしたクラスのデータも保護されています）", "success");
       };
 
       const handleStudentChange = (classId, studentId, field, value) => {
@@ -934,7 +1051,6 @@
         });
       };
 
-      // ★ バルクインポート（コピペで一括追加）の処理ロジック
       const processBulkImport = () => {
         const { classId, text } = bulkImport;
         if (!text.trim()) {
@@ -949,24 +1065,22 @@
         let currentMaxNumber = targetClass.students.length > 0 ? Math.max(...targetClass.students.map(s => s.number)) : 0;
 
         lines.forEach((line, index) => {
-          const cols = line.split(/[\t,]/).map(c => c.trim().replace(/^"|"$/g, '')); // タブまたはカンマ区切り（Excelからのコピペはタブ区切り）
+          const cols = line.split(/[\t,]/).map(c => c.trim().replace(/^"|"$/g, ''));
           if (cols.length === 0 || !cols[0]) return;
 
           let number = currentMaxNumber + 1;
           let name = "";
           let furigana = "";
-          let gender = "その他"; // デフォルトを「その他」に変更
+          let gender = "その他";
 
           if (cols.length > 0) {
             const firstIsNum = !isNaN(parseInt(cols[0]));
             if (firstIsNum) {
-              // 1列目が数字の場合 (例: 1, 山田 太郎, やまだ たろう, 男)
               number = parseInt(cols[0]);
               name = cols[1] || "";
               furigana = cols[2] || "";
               gender = cols[3] || "その他";
             } else {
-              // 1列目が名前の場合 (例: 山田 太郎, やまだ たろう, 男)
               name = cols[0];
               furigana = cols[1] || "";
               gender = cols[2] || "その他";
@@ -1179,7 +1293,6 @@
             )}
           </div>
 
-          {/* ★ 要望3: 一括追加（コピペ）用のモーダルUI */}
           {bulkImport.show && (
             <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4">
               <div className="bg-white rounded-lg shadow-xl w-full max-w-2xl overflow-hidden flex flex-col max-h-[90vh]">
@@ -1194,7 +1307,7 @@
                     <p className="font-bold mb-1">💡 Excelやスプレッドシートからコピー＆ペーストできます</p>
                     <ul className="list-disc pl-5 space-y-1 text-xs">
                       <li>以下の形式で、表計算ソフトからセルをコピーして下の枠に貼り付けてください。</li>
-                      <li>形式: <strong>「出席番号」 「氏名」 「ふりがな」 「性別」</strong> の順（列がない場合は空欄や詰められていても自動判別を試みます）</li>
+                      <li>形式: <strong>「出席番号」 「氏名」 「ふりがな」 「性別」</strong> の順</li>
                       <li>出席番号が省略された場合は、現在の最大番号から自動で連番が振られます。</li>
                     </ul>
                   </div>
@@ -1222,155 +1335,122 @@
     }
 
     // ==========================================
-    // 3. データ同期・管理画面
+    // 3. データ同期・管理画面 (Account Sync)
     // ==========================================
-    function SyncScreen({ appData, setAppData, showToast, user, syncId, onLinkDevice }) {
-      const [importText, setImportText] = useState('');
-      const [inputCode, setInputCode] = useState('');
-
-      const handleCopyExport = () => {
-        const text = JSON.stringify(appData, null, 2);
-        try {
-          if (navigator.clipboard) {
-             navigator.clipboard.writeText(text);
-          } else {
-             const textArea = document.createElement("textarea");
-             textArea.value = text;
-             document.body.appendChild(textArea);
-             textArea.select();
-             document.execCommand('copy');
-             document.body.removeChild(textArea);
-          }
-          showToast("データをコピーしました。メモ帳等に貼り付けて保存してください。", "success");
-        } catch (err) {
-          showToast("コピーに失敗しました", "error");
-        }
+    function SyncScreen({ appData, setAppData, showToast, user, onLogout }) {
+      const handleDownloadExport = () => {
+        const data = {
+          ...appData,
+          exportDate: new Date().toISOString()
+        };
+        const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        const d = new Date();
+        const dateStr = `${d.getFullYear()}${String(d.getMonth()+1).padStart(2,'0')}${String(d.getDate()).padStart(2,'0')}`;
+        a.download = `attendance_backup_${dateStr}.json`;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+        showToast("データをバックアップファイルとしてダウンロードしました", "success");
       };
 
-      const handleImportJson = () => {
-        if (!importText.trim()) {
-          showToast("テキストが入力されていません", "error");
-          return;
+      const handleFileUpload = (event) => {
+        const file = event.target.files[0];
+        if (!file) return;
+        
+        if (window.confirm('選択したファイルからデータを復元しますか？\n現在のデータはすべて上書きされます。')) {
+          const reader = new FileReader();
+          reader.onload = (e) => {
+            try {
+              const parsed = JSON.parse(e.target.result);
+              if (!parsed.classes || !parsed.settings) throw new Error("不正なデータフォーマットです");
+              setAppData(parsed);
+              showToast("ファイルからデータを復元しました", "success");
+            } catch (err) {
+              showToast("ファイルの形式が正しくありません", "error");
+              console.error(err);
+            }
+          };
+          reader.readAsText(file);
         }
-        try {
-          const parsed = JSON.parse(importText);
-          if (!parsed.classes || !parsed.settings) throw new Error("不正なデータフォーマットです");
-          if (window.confirm("現在のデータは失われ、入力したデータで上書きされます。よろしいですか？")) {
-            setAppData(parsed);
-            setImportText('');
-            showToast("データを復元しました", "success");
-          }
-        } catch (e) {
-          showToast("正しい形式のデータではありません", "error");
-        }
-      };
-
-      const clearLocalData = () => {
-        if (window.confirm("すべてのデータを消去して初期状態に戻します。元には戻せません。よろしいですか？")) {
-          setAppData(DEFAULT_DATA);
-          showToast("データを初期化しました", "success");
-        }
+        event.target.value = ''; // Reset
       };
 
       return (
         <div className="max-w-4xl mx-auto space-y-6">
           <div className="bg-white p-6 rounded shadow border-t-4 border-blue-500">
             <h2 className="text-lg font-bold mb-3 flex items-center gap-2">
-              <i className="fa-solid fa-cloud text-blue-500"></i>
-              端末間のデータ同期と管理
+              <i className="fa-solid fa-user-circle text-blue-500"></i>
+              アカウントと同期
             </h2>
             <p className="text-sm text-gray-600 mb-4">
-              以下の同期コードを他の端末（スマホやタブレットなど）で入力すると、データがリアルタイムで共有されます。
+              ログイン中のアカウントにデータが保存され、他の端末と自動的にリアルタイム同期されます。
             </p>
             
-            <div className="flex flex-col sm:flex-row items-start sm:items-center gap-3 mb-5 bg-blue-50 p-4 rounded-lg border border-blue-100">
-              <span className="text-sm font-bold text-blue-800">あなたの同期コード:</span>
-              <span className="text-2xl font-bold tracking-widest text-blue-600 bg-white px-4 py-1.5 rounded shadow-sm border border-blue-200 select-all">
-                {syncId}
-              </span>
-            </div>
-
-            <div className="border-t border-gray-200 pt-5 mt-2">
-              <label className="text-sm font-bold text-gray-700 mb-1 block">他の端末のデータとリンクする</label>
-              <p className="text-xs text-red-500 mb-3 font-bold">※リンクするとこの端末のデータは失われ、リンク先のデータで上書きされます。</p>
-              <div className="flex flex-col sm:flex-row gap-2">
-                <input 
-                  type="text" 
-                  value={inputCode}
-                  onChange={e => setInputCode(e.target.value)}
-                  placeholder="8桁の数字コードを入力" 
-                  className="border border-gray-300 rounded px-3 py-2 text-base outline-none focus:ring-2 focus:ring-blue-500 flex-1 font-bold tracking-widest sm:max-w-xs"
-                />
-                <button 
-                  onClick={() => onLinkDevice(inputCode)}
-                  className="px-6 py-2 bg-blue-600 text-white rounded font-bold hover:bg-blue-700 shadow-sm transition whitespace-nowrap flex items-center justify-center gap-2"
-                >
-                  <i className="fa-solid fa-link"></i> リンクする
-                </button>
+            <div className="flex flex-col sm:flex-row items-center justify-between gap-3 bg-blue-50 p-4 rounded-lg border border-blue-100">
+              <div className="flex flex-col w-full sm:w-auto min-w-0">
+                <span className="text-[10px] font-bold text-blue-800 mb-0.5">ログイン中のアカウント:</span>
+                <span className="text-sm sm:text-base font-bold text-blue-600 truncate">
+                  {user ? (user.isAnonymous ? "ゲストユーザー (お試し中)" : user.email) : "未ログイン"}
+                </span>
               </div>
+              {user && (
+                <button 
+                  onClick={onLogout}
+                  className="w-full sm:w-auto px-6 py-2 bg-red-500 text-white rounded font-bold hover:bg-red-600 shadow-sm transition whitespace-nowrap flex items-center justify-center gap-2"
+                >
+                  <i className="fa-solid fa-sign-out-alt"></i> ログアウト
+                </button>
+              )}
             </div>
-            
-            {!isFirebaseConfigured && (
-               <p className="text-xs text-red-500 mt-4 font-bold"><i className="fa-solid fa-exclamation-triangle"></i> 現在Firebaseが設定されていないため、クラウド機能は利用できません。</p>
-            )}
           </div>
 
           <div className="bg-white p-6 rounded shadow">
             <h2 className="text-lg font-bold mb-4 flex items-center gap-2"><i className="fa-solid fa-file-export"></i> 手動データ引き継ぎ（バックアップ・復元）</h2>
             
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-              {/* 出力（エクスポート） */}
+              {/* 出力 */}
               <div className="border border-gray-200 rounded-lg p-5 bg-gray-50 flex flex-col">
                 <h3 className="font-bold text-gray-800 mb-2 border-b pb-2 flex items-center gap-2">
-                  <i className="fa-solid fa-arrow-right-from-bracket text-blue-600"></i>
-                  データを出力する（バックアップ）
+                  <i className="fa-solid fa-file-download text-blue-600"></i>
+                  バックアップの保存（エクスポート）
                 </h3>
                 <p className="text-sm text-gray-600 mb-4 flex-1">
-                  現在のアプリのデータを専用の文字列に変換してコピーします。<br/>
-                  コピーした文字列は、メモ帳やメールアプリなどに貼り付けて保存・移動してください。
+                  生徒の名簿情報、出欠記録など、すべてのデータをJSONファイルとしてダウンロードします。定期的なバックアップとして保存してください。
                 </p>
                 <button 
-                  onClick={handleCopyExport} 
+                  onClick={handleDownloadExport} 
                   className="w-full flex justify-center items-center gap-2 bg-white border-2 border-blue-600 text-blue-600 hover:bg-blue-50 px-4 py-3 rounded font-bold transition-colors"
                 >
-                  <i className="fa-solid fa-copy"></i> 現在のデータをコピーする
+                  <i className="fa-solid fa-download"></i> バックアップファイルを保存
                 </button>
               </div>
 
-              {/* 入力（インポート） */}
+              {/* 入力 */}
               <div className="border border-gray-200 rounded-lg p-5 bg-gray-50 flex flex-col">
                 <h3 className="font-bold text-gray-800 mb-2 border-b pb-2 flex items-center gap-2">
-                  <i className="fa-solid fa-arrow-right-to-bracket text-green-600"></i>
-                  データを取り込む（復元）
+                  <i className="fa-solid fa-file-upload text-green-600"></i>
+                  データを取り込む（インポート）
                 </h3>
-                <p className="text-sm text-gray-600 mb-2">
-                  コピーしておいた文字列を下の枠に貼り付けて、データを復元します。<br/>
+                <p className="text-sm text-gray-600 mb-4">
+                  保存しておいたバックアップファイル(.json)を選択して、データを復元します。<br/>
                   <span className="text-red-500 font-bold text-xs">※現在のデータは上書きされ消去されます。</span>
                 </p>
                 
-                <textarea 
-                  value={importText}
-                  onChange={e => setImportText(e.target.value)}
-                  placeholder="ここにコピーした文字列を貼り付けてください..."
-                  className="w-full h-24 border border-gray-300 rounded p-2 text-xs font-mono bg-white mb-3 focus:ring-2 focus:ring-green-500"
-                />
-                
-                <button 
-                  onClick={handleImportJson} 
-                  className="w-full flex justify-center items-center gap-2 bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded font-bold transition-colors mt-auto"
-                >
-                  <i className="fa-solid fa-download"></i> 貼り付けたデータで復元する
-                </button>
+                <div className="mt-auto">
+                  <input type="file" id="import-file" accept=".json" className="hidden" onChange={handleFileUpload} />
+                  <button 
+                    onClick={() => document.getElementById('import-file').click()} 
+                    className="w-full flex justify-center items-center gap-2 bg-green-600 hover:bg-green-700 text-white px-4 py-3 rounded font-bold transition-colors"
+                  >
+                    <i className="fa-solid fa-upload"></i> ファイルを選択して復元
+                  </button>
+                </div>
               </div>
             </div>
-          </div>
-
-          <div className="border border-red-200 bg-red-50 p-6 rounded shadow mt-10">
-            <h3 className="text-red-800 font-bold flex items-center gap-2 mb-2"><i className="fa-solid fa-exclamation-circle"></i> 危険な操作</h3>
-            <p className="text-sm text-red-600 mb-4">アプリ内のデータをすべて消去して初期状態に戻します。元には戻せません。</p>
-            <button onClick={clearLocalData} className="bg-white border border-red-500 text-red-600 hover:bg-red-50 px-4 py-2 rounded text-sm font-bold flex items-center gap-2">
-              <i className="fa-solid fa-trash"></i> データを全消去する
-            </button>
           </div>
         </div>
       );
@@ -1378,7 +1458,6 @@
 
     const rootElement = document.getElementById('root');
     const root = ReactDOM.createRoot(rootElement);
-    // ErrorBoundaryでApp全体を囲む
     root.render(
       <ErrorBoundary>
         <App />
