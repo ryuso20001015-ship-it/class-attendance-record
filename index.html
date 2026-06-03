@@ -277,6 +277,7 @@
 
       const lastCloudUpdateTime = useRef(0);
       const isIncomingUpdate = useRef(false);
+      const initialLoadDone = useRef(false); // ★追加: クラウドからの初回ロード完了フラグ
       const [isSyncing, setIsSyncing] = useState(false);
 
       // Firebase Init
@@ -355,14 +356,17 @@
               // 違うアカウントでログインした場合はローカルデータをリセットして混在を防ぐ
               setAppData(DEFAULT_DATA);
               safeStorage.set('attendance_app_data', JSON.stringify(DEFAULT_DATA));
-              lastCloudUpdateTime.current = 0; // クラウドのデータを受け入れるためにリセット
+              lastCloudUpdateTime.current = 0; 
+              initialLoadDone.current = false; // ★リセット
             }
             safeStorage.set('last_uid', currentUser.uid);
             setUser(currentUser);
             setShowAuthModal(false);
+            setActiveTab('attendance'); // ★追加: ログインしたら出欠記録タブをデフォルト表示
           } else {
             setUser(null);
             setShowAuthModal(true);
+            initialLoadDone.current = false; // ★リセット
           }
           setAuthInitialized(true);
         });
@@ -376,6 +380,7 @@
         const docRef = window.fb.doc(db, 'artifacts', appId, 'users', user.uid, 'attendance_data', 'main');
         
         const unsubscribe = window.fb.onSnapshot(docRef, (docSnap) => {
+          initialLoadDone.current = true; // ★初回ロード完了をマーク（これ以降でないとアップロードさせない）
           if (docSnap.exists()) {
             const data = docSnap.data();
             const cloudTime = data.updatedAt ? new Date(data.updatedAt).getTime() : 0;
@@ -401,8 +406,9 @@
           safeStorage.set('attendance_app_data', JSON.stringify(appData));
           if (isIncomingUpdate.current) {
             isIncomingUpdate.current = false; // クラウドからの受信時は送信しない
-          } else {
-            saveToFirebase(appData); // 自分の操作なら送信
+          } else if (initialLoadDone.current) {
+            // ★変更: 自分の操作なら送信（ただし初回ロードが終わってから）
+            saveToFirebase(appData);
           }
         }
       }, [appData, isLoaded]);
@@ -544,6 +550,17 @@
                   icon={<i className="fa-solid fa-user-circle"></i>} 
                   label="アカウント・同期" 
                 />
+                
+                {/* ★追加: ゲスト・アカウントログインの区別 */}
+                {user && (
+                  <div className="ml-1 sm:ml-2 px-2 py-1.5 bg-blue-900/50 rounded border border-blue-700 text-[10px] sm:text-xs font-bold flex items-center gap-1.5 shadow-inner" title={user.isAnonymous ? "ゲスト利用中" : user.email}>
+                    {user.isAnonymous ? (
+                      <><i className="fa-solid fa-user-secret text-yellow-400"></i><span className="hidden sm:inline text-blue-100">ゲスト</span></>
+                    ) : (
+                      <><i className="fa-solid fa-user-check text-green-400"></i><span className="hidden lg:inline text-blue-100 truncate max-w-[100px]">{user.email.split('@')[0]}</span></>
+                    )}
+                  </div>
+                )}
               </div>
             </div>
           </header>
@@ -1330,6 +1347,20 @@
               </div>
             </div>
           )}
+          
+          {/* ★追加: 設定ページ下段のデータ初期化ボタン */}
+          <div className="border border-red-200 bg-red-50 p-6 rounded shadow mt-10">
+            <h3 className="text-red-800 font-bold flex items-center gap-2 mb-2"><i className="fa-solid fa-triangle-exclamation"></i> 危険な操作</h3>
+            <p className="text-sm text-red-600 mb-4">設定や生徒情報をすべて消去して初期状態に戻します。クラウド上のデータも同時に消去されます。元には戻せません。</p>
+            <button onClick={() => {
+              if (window.confirm("すべてのデータを消去して初期状態に戻します。本当に実行してよろしいですか？")) {
+                setAppData(DEFAULT_DATA);
+                showToast("データをすべて初期化しました", "success");
+              }
+            }} className="bg-white border border-red-500 text-red-600 hover:bg-red-50 px-4 py-2 rounded text-sm font-bold flex items-center gap-2 transition-colors">
+              <i className="fa-solid fa-trash"></i> データを全消去する
+            </button>
+          </div>
         </div>
       );
     }
