@@ -267,6 +267,7 @@
       const isIncomingUpdate = useRef(false);
       const initialLoadDone = useRef(false);
       const [isSyncing, setIsSyncing] = useState(false);
+      const [showBackupPrompt, setShowBackupPrompt] = useState(false);
 
       useEffect(() => {
         const initFb = () => {
@@ -333,6 +334,21 @@
         }
         setIsLoaded(true);
       }, []);
+
+      // 日曜日バックアップの判定
+      useEffect(() => {
+        if (isLoaded && authInitialized) {
+          const today = new Date();
+          if (today.getDay() === 0) { // 日曜日
+            const dateString = today.toDateString(); 
+            const lastPrompt = safeStorage.get('last_backup_prompt_date');
+            if (lastPrompt !== dateString) {
+              safeStorage.set('last_backup_prompt_date', dateString);
+              setShowBackupPrompt(true);
+            }
+          }
+        }
+      }, [isLoaded, authInitialized]);
 
       useEffect(() => {
         if (!auth) return;
@@ -468,6 +484,25 @@
         setAppData(next);
       };
 
+      const handleDownloadExport = () => {
+        const data = {
+          ...appData,
+          exportDate: new Date().toISOString()
+        };
+        const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        const d = new Date();
+        const dateStr = `${d.getFullYear()}${String(d.getMonth()+1).padStart(2,'0')}${String(d.getDate()).padStart(2,'0')}`;
+        a.download = `attendance_backup_${dateStr}.json`;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+        showToast("データをバックアップファイルとしてダウンロードしました", "success");
+      };
+
       if (!isLoaded || !authInitialized) {
         return (
           <div className="flex flex-col items-center justify-center h-screen bg-gray-50 text-gray-600 font-sans">
@@ -485,6 +520,31 @@
               onRegister={handleRegister} 
               onGuestLogin={handleGuestLogin} 
             />
+          )}
+
+          {showBackupPrompt && (
+            <div className="fixed inset-0 bg-black/60 z-[300] flex items-center justify-center p-4">
+              <div className="bg-white rounded-lg shadow-xl w-full max-w-sm overflow-hidden">
+                <div className="bg-blue-800 text-white px-4 py-3 font-bold flex items-center gap-2">
+                  <i className="fa-solid fa-file-download"></i> バックアップの確認
+                </div>
+                <div className="p-5 text-gray-700 text-sm">
+                  <p>本日は日曜日です。</p>
+                  <p className="mt-2">データの安全のため、バックアップを作成しますか？</p>
+                </div>
+                <div className="bg-gray-50 px-4 py-3 flex justify-end gap-2 border-t">
+                  <button onClick={() => setShowBackupPrompt(false)} className="px-4 py-2 rounded border border-gray-300 hover:bg-gray-100 text-sm font-medium">
+                    後で
+                  </button>
+                  <button onClick={() => {
+                    handleDownloadExport();
+                    setShowBackupPrompt(false);
+                  }} className="px-4 py-2 rounded bg-blue-600 hover:bg-blue-700 text-white text-sm font-bold flex items-center gap-2 shadow-sm">
+                    <i className="fa-solid fa-download"></i> バックアップを作成する
+                  </button>
+                </div>
+              </div>
+            </div>
           )}
 
           <header className="bg-blue-800 text-white shadow-md print-hidden">
@@ -567,7 +627,7 @@
           <main className="container mx-auto px-2 py-2 sm:px-4">
             {activeTab === 'attendance' && <AttendanceScreen appData={appData} setAppData={handleSetAppData} />}
             {activeTab === 'settings' && <SettingsScreen appData={appData} setAppData={handleSetAppData} showToast={showToast} />}
-            {activeTab === 'sync' && <SyncScreen appData={appData} setAppData={handleSetAppData} showToast={showToast} user={user} onLogout={handleLogout} />}
+            {activeTab === 'sync' && <SyncScreen appData={appData} setAppData={handleSetAppData} showToast={showToast} user={user} onLogout={handleLogout} onExport={handleDownloadExport} />}
           </main>
         </div>
       );
@@ -1430,26 +1490,7 @@
       );
     }
 
-    function SyncScreen({ appData, setAppData, showToast, user, onLogout }) {
-      const handleDownloadExport = () => {
-        const data = {
-          ...appData,
-          exportDate: new Date().toISOString()
-        };
-        const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        a.href = url;
-        const d = new Date();
-        const dateStr = `${d.getFullYear()}${String(d.getMonth()+1).padStart(2,'0')}${String(d.getDate()).padStart(2,'0')}`;
-        a.download = `attendance_backup_${dateStr}.json`;
-        document.body.appendChild(a);
-        a.click();
-        document.body.removeChild(a);
-        URL.revokeObjectURL(url);
-        showToast("データをバックアップファイルとしてダウンロードしました", "success");
-      };
-
+    function SyncScreen({ appData, setAppData, showToast, user, onLogout, onExport }) {
       const handleFileUpload = (event) => {
         const file = event.target.files[0];
         if (!file) return;
@@ -1514,7 +1555,7 @@
                   生徒の名簿情報、出欠記録など、すべてのデータをJSONファイルとしてダウンロードします。定期的なバックアップとして保存してください。
                 </p>
                 <button 
-                  onClick={handleDownloadExport} 
+                  onClick={onExport} 
                   className="w-full flex justify-center items-center gap-2 bg-white border-2 border-blue-600 text-blue-600 hover:bg-blue-50 px-4 py-3 rounded font-bold transition-colors"
                 >
                   <i className="fa-solid fa-download"></i> バックアップファイルを保存
